@@ -1,0 +1,398 @@
+# Handover for Codex — Sentient Dash
+
+Originally written by Claude on 2026-08-27; last updated by Codex on 2026-09-01. This frontend copy is the canonical handover
+for frontend work; the backend repo also carries a mirror that is synchronized
+when backend work is released. Esteban is planning to merge the two repos into
+one — read the "Planned repo merge" section near the bottom before you start
+that.
+
+## Current release: multi-account Queue assignment (2026-09-01)
+
+- Coordinators can right-click any request in the Queue Pool and choose `Assign to multiple accounts`. The compact account picker accepts one or more active Sentient accounts and resolves the existing `queue_designer_accounts` mapping to every eligible Queue user.
+- The source Pool row is consumed for the first matching user; each additional user receives an independent scheduled duplicate. A user who manages multiple selected accounts receives one copy with all matching recommended accounts, and attachment metadata/files are preserved.
+- Assignments are collision-safe and scheduled at the next available 10-minute slot. Each assignment gets the normal Queue Slack DM (thumbnail plus `Open in Queue` link); this automatic workflow does not emit routine SPOC log messages.
+- Endpoint: `POST /api/dashboard/queue/v2/requests/{request_id}/assign-accounts` with a JSON-encoded `accounts` form field. The frontend action is wired through the global contextual menu (`assign-multiple`) and updates Pool, scheduler, and Pick state optimistically after success.
+
+### Follow-up: resilient Self-assign permission updates (2026-09-01)
+
+- Settings' `Self-assign` checkbox persists through the existing `/api/admin/users` upsert. The shared frontend API retries this idempotent user update on transient Render gateway/network handoffs, so a cold start no longer rolls the optimistic marker back with `Network error while updating.`
+- Frontend source commit: `4ae0d81`; static release: `4a23cc1` on `gh-pages`.
+
+## Previous release: SPOC approval-request notifications (2026-09-01)
+
+- Backend source commit: `09db1bd`; Render is live on that commit. `#spoc-dashboard` is now an approval inbox only: it accepts user-created approval requests for PP revisions, moves, cancellations, trainee reviews, personal-time blocks, and account access.
+- Routine Queue activity is intentionally excluded from SPOC: assignments, edits, scheduling/resubmissions, returns to the pool, coordinator cancellations/deletions, Slack delivery events, and ticket approvals/rejections stay in Queue history and do not create channel messages.
+- Pending personal-time and account-access requests now also post to SPOC with an `Approve` action and an `Open Requests` link. Coordinator-created personal time is already firm and does not notify the channel.
+- The allowlist lives in backend `app/slack_alerts.py` (`QUEUE_SPOC_APPROVAL_REQUEST_EVENTS`) and is enforced before any Slack API call, so future Queue mutations must explicitly opt in.
+- The one-time backend migration `queue_roles_v9_fix_santiago_florez_names` corrects the crossed display names: `santiagoflhi@gmail.com` → Santiago and `dsflorezl@gmail.com` → Florez, preserving each user's Slack ID and access.
+
+## Previous release: compact Queue assignment notifications (2026-09-01)
+
+- Source commit: `b08bb00`; static GitHub Pages release: `7ab7138`; backend release: `9c1e56e` (Render deployment live).
+- Queue assignment DMs are intentionally minimal: one line in the form `<assigner> assigned you this post for <account>`, the post thumbnail, and one `Open in Queue` button. Briefs, notes, references, priority, PP scope, and schedule stay in the Queue side view instead of being duplicated in Slack.
+- Stored relative Queue cover paths are normalized to public HTTPS API URLs before they are sent to Slack, and custom source thumbnails are passed through unchanged. This keeps Slack's image block fetchable instead of rendering a broken-image placeholder.
+- Dashboard `Send to Pool` and Queue `Create Post` no longer show or submit a Priority field. Backend defaults remain compatible with existing records and continue to use normal priority unless a coordinator marks a request urgent elsewhere.
+- Queue requests can now be duplicated from the sideview, pool cards, scheduler blocks, and coordinator's assigned table. Each copy is an independent Pool request with a fresh id, no assignee or schedule, the original brief/tags/PP/account recommendation, and copied attachments when present. This allows the same source request to be assigned to multiple designers without changing the original.
+- The global Queue context menu exposes the same duplicate action wherever a request carries a request id, and mobile Queue exposes it in the coordinator sideview. The sideview header actions now wrap instead of collapsing into the unreadable vertical button shown in the previous release.
+- Dashboard role previews now apply their effective Admin/VC/PD/Sales/Trainee permissions synchronously, so the header and Queue controls do not briefly render with the wrong role while the large catalogue loads.
+- Standalone Tracker and Insights pages apply the same coordinator-only navigation rule; PD/Sales/Trainee previews do not expose those links. Queue remains available to every signed-in dashboard user, with Pick/Create gated by the existing self-assignment permission.
+- Mobile Queue/Create Post uses the same binary priority model as desktop (`normal` or `urgent`); legacy priority values remain readable as normal for old records.
+- Shareable route state is now encoded in a URL-safe `r` token across Dashboard, Queue, Settings, Tracker, Insights, mobile redirects, PWA shortcuts, and Slack deep links. This is portable obfuscation (not encryption): copied links work without a secret, old readable query links remain supported, and account handles/post keys/task ids are no longer exposed in newly generated URLs.
+- Backend Slack dashboard/Queue links use the same token format. The codec is intentionally duplicated in static HTML/redirect entry points so those pages can decode links before the React bundle starts.
+
+## Production hotfix: PostgreSQL runtime schema (2026-09-01)
+
+- Root cause of the production-wide authenticated failures was confirmed in Render logs: `get_dashboard_user_access()` selected `dashboard_users.time_zone`, but the managed Postgres database had been imported before that column was introduced. Every authenticated request failed in middleware with `psycopg.errors.UndefinedColumn`, while `/api/health` remained misleadingly green.
+- Backend `main` is live at `f15aae7` (migration feature commit `ca576ca`, cursor compatibility fix `f15aae7`). `init_db()` now applies the small post-cutover schema extension set idempotently on Postgres: `dashboard_users.time_zone`, `dashboard_users.can_self_assign`, and `queue_scheduler_preferences`.
+- The missing preferences table was also the root cause of Queue Hide/Reorder returning `NOT FOUND` and reverting. Do not remove the Postgres runtime-extension path or restore the old unconditional early return in `init_db()`.
+- Frontend static release `5bf1cd4` publishes the pending standalone `tracker.html`, `insights.html`, and shared `role-preview.js`; source remains on `main` at `4514058` before this handover note.
+- Live authenticated verification passed after deployment: Tracker rendered 45 accounts with follower data, Settings opened as `DEV` with every command-center tab, and Queue rendered the coordinator schedule, pool, Overview, Requests, Tracker, Insights, and Dashboard controls.
+- Backend verification: all 23 pytest tests pass, including the new idempotent runtime-schema regression test. Production `/api/health` reports commit `f15aae781aaddf11374ffedad46e70b7ac5291da`.
+
+## Latest release: role permissions and resilient Dashboard (2026-09-01)
+
+- Frontend source is on `main` at `c0ccf88`; the matching static release is on `gh-pages` at `3969edb`. The production entry bundles are `dashboard-DmhXHg_n.js`, `queue-Doy98C9R.js`, `settings-Cw_SpMqQ.js`, and shared `styles-DykX9bxV.js`.
+- Queue is visible to every signed-in dashboard user. Tracker and Insights are visible only to VC, Admin, or Dev when Dev is in full-access mode.
+- Esteban's Dev role switcher is a true per-tab UI simulator. Selecting PD/Sales/Trainee removes coordinator-only Tracker, Insights, Overview, and Settings controls in that tab. Selecting `Dev · full access` restores all of them. Legacy session values containing the literal `dev` are normalized as full Dev access instead of being mistaken for an active restricted preview.
+- Dashboard permission loading is independent from the post catalogue. A posts/accounts refresh failure can no longer prevent `/api/dashboard/me` from establishing Admin/VC/Dev header controls.
+- Once the Dashboard has a valid cached catalogue, background refresh failures stay silent and retry without replacing the current UI or leaving a permanent `Reconnecting to the shared Post DB…` banner.
+- Verification passed: `VITE_SKIP_PUBLIC=1 npm run build`, Queue smoke, Settings smoke, roles smoke, and live authenticated checks for Dashboard tools and Settings access.
+- Backend had no source changes in this release. Production remains healthy on Render at commit `cbcd4d2`.
+- During this release a concurrent Claude filesystem operation deleted canonical tracked files (including `FOR_CODEX.md`, `src/prefsContext.jsx`, smoke runners, favicon/manifest, and static covers). The operation was stopped and every tracked deletion was restored from the current `main` commit. Do not reapply or commit those deletions.
+
+## Latest change: independent mobile PWA (2026-08-30)
+
+- Sentient Dash now has a purpose-built mobile app at `https://sentientdash.app/mobile/`. It is an independent React entry with its own information architecture and CSS, not a responsive copy of the desktop dashboard.
+- Phones are redirected automatically from Dashboard, Queue, Tracker, Insights, and Settings into the equivalent mobile section. `?desktop=1` keeps the desktop version for the current tab; `?mobile=1` re-enables mobile routing.
+- The installed PWA is named `Sentient Dash`, has standalone/portrait metadata, safe-area layout, mobile icons, a service worker, offline state, and an update-ready flow.
+- Primary mobile navigation exposes five sections from the start: Home, Research, Queue, Tracker, and Insights. Admin/Dev Settings is a separate sixth route opened from the profile sheet.
+- Home is role-aware: PD-first users land on their production day; VC/Admin users get team, pool, and approval status. Queue preserves live drafts, submit-and-notify, Pick, requests, tickets, time blocks, and coordinator assignment actions in touch-first sheets.
+- Home and Tracker prioritize the desktop Tracker favorites and show exact total followers plus the current day's follower delta. Tracker also shows an aggregate follower total and daily growth.
+- Research has the complete touch-first filter set: account, post format, media, date presets/custom range, minimum likes/comments, promos, hidden posts, and all supported sort modes. Every mobile form control is at least 16px to prevent iOS focus zoom.
+- Queue's Agenda includes a compact 24-hour day map with plain status bars and blocked-time markers above the detailed assignments.
+- Mobile Settings supports live Account label/group/HOT-threshold editing, activation, avatar refresh, and Slack test/custom notifications with optional images.
+- Mobile preferences use the same local-storage keys as desktop for light/dark theme, preset accent, and custom accent. Base surfaces remain neutral black/gray or white/gray; Sentient green, neon yellow, blue, coral, and a true custom picker are available globally.
+- Firebase auth now explicitly uses browser-local persistence before popup, redirect, and shared SSO flows, so the mobile login survives reloads and reopening the app when browser storage is available.
+- Verification: production Vite build, dedicated mobile jsdom smoke test, existing Dashboard/Queue/Settings smokes, Queue planner tests, and 390x844 visual QA.
+
+## Latest change: standalone Settings command center (2026-08-30)
+
+- Settings is now its own Vite entry and website at `https://sentientdash.app/settings.html`, not a `?view=admin` Dashboard replacement.
+- Access is limited to Admin or Dev. The backend `/api/admin/*` boundary accepts either role; old `?view=admin&settingsTab=...` links redirect to the new page.
+- The shared gear dropdown on Dashboard, Queue, Tracker, and Insights shows a literal `Settings` link only for Admin/Dev.
+- Settings has global links to Dashboard, Tracker, Insights, and Queue, plus the same accent, theme, language, identity, and sign-out gear.
+- Tabs are `Overview`, `Accounts`, `Users`, `Usage`, `Notifications`, `System`, and `Reports`. Usage is no longer embedded in Users; Slack status/test/manual alerts are no longer embedded in System.
+- Add Account moved out of the Dashboard filters and into Settings → Accounts. Queue's separate Admin/Reports button was removed; Reports has one home in Settings.
+- Users centralizes editable display name, operating role, Admin access, Slack ID, and managed Sentient accounts. `dashboard_users.display_name` is the live source; Queue receives it in its scheduler roster and falls back safely for older data.
+- Slack profile photos are fetched server-side and served through the same-origin `/api/dashboard/user-avatar/{slack_id}` asset route, so Queue and Settings do not depend on fragile Slack CDN URLs.
+- Frontend verification: production build, Queue planner tests, Queue smoke, and Settings smoke. Backend verification: 16 pytest tests.
+
+## Latest change: persistent new-account import progress (2026-08-30)
+
+- Settings → Accounts now records every new account's initial history import in `localStorage` and renders a persistent onboarding section with the account, phase, elapsed progress, percentage, and completion/error state.
+- The panel reconnects to `/api/admin/accounts/backfill-status` every four seconds, so a Settings reload does not lose visibility while the server-side Apify import continues. Completion stays visible briefly before its local UI record is cleared; credentials are never stored.
+- Dashboard and Queue cover resolution now falls back to Cortex's cached `/api/dashboard/covers/{account}/{post_id}` route when an Instagram CDN URL is missing or expired. Queue no longer prefixes absolute CDN URLs with the API origin.
+- Reload counts now uses the same fresh Apify result to re-cache a missing/expired cover in Cortex and adds a cache-busting retry token in the browser, so a failed card image can recover from the card's `...` menu.
+- Verification: Settings, Queue, and mobile smoke tests plus a `VITE_SKIP_PUBLIC=1` production build. This change is released to production only after both source repositories pass their checks.
+
+## What this is
+
+**Sentient Dash** (`sentientdash.app`) is Sentient Agency's internal
+Instagram analytics + content-queue tool. It's two repos today:
+
+- **`chatgptricks/tricks-dash`** — the frontend. React 19 + Vite, no
+  component-per-file convention: almost the whole dashboard UI is
+  `src/App.jsx` (~5,100 lines) and `src/styles.css` (~7,400 lines). Deployed
+  as a static site to GitHub Pages, served at `sentientdash.app`.
+- **`chatgptricks/cortex`** — the backend. FastAPI, essentially one big
+  `backend/app/main.py` (~114k chars, ~60 routes). Deployed on Render at
+  `cortex-api-db2e.onrender.com`. Local path on this Mac:
+  `/Users/tbnalfaro/Desktop/Codex Projects/10 Predict` (yes, the folder is
+  still named "10 Predict" — see "Predict is archived" below).
+
+Local paths as mounted for an agent working on this Mac:
+- tricks-dash: `/Users/tbnalfaro/Desktop/Codex Projects/09 Tricks Dash/Tricks Dash`
+- cortex: `/Users/tbnalfaro/Desktop/Codex Projects/10 Predict`
+
+**"Predict is archived."** `cortex` used to be a completely different app —
+"Cortex by Sentient", a TRIBE v2 fMRI-model cover-image analyzer with A/B
+testing and a likes-prediction model (`prediction_v2.py`, `calibration.py`,
+`tribe_adapter.py`, etc.). That entire feature set was deliberately deleted
+(only `__pycache__` artifacts remain — the `.py` source files are gone). The
+repo was repurposed as the Sentient Dash backend. `config.py` and a few other
+files still have comments explaining this; the on-disk DB file is still
+named `predict.sqlite3` and the `PREDICT_DATA_DIR` / `PREDICT_ALLOWED_ORIGINS`
+env var names survive from that era — renaming them would be a real
+migration for zero benefit, so it was left alone on purpose. If you find a
+doc or comment that talks about TRIBE v2, brain activation, calibration
+models, or A/B cover testing, it's describing the dead product, not this one.
+
+## Live surfaces
+
+- `https://sentientdash.app/` — main dashboard (`index.html` / `App.jsx`),
+  multi-page Vite build (`vite.config.js` has four entries: `dashboard` →
+  `index.html`, `queue` → `queue.html`, `settings` → `settings.html`, and
+  `mobile` → `mobile/index.html`).
+- `https://sentientdash.app/mobile/` — independent mobile PWA. Real phones
+  are routed here automatically; add `?desktop=1` to any desktop URL to opt
+  out for the current tab.
+- `https://sentientdash.app/settings.html` — Admin/Dev Settings command center.
+- `https://sentientdash.app/queue.html` — Queue board (drag-and-drop content
+  calendar, per-user assignment, deep-dive sidebar). Shares
+  `src/postDetail.jsx` with the main dashboard's right rail so both surfaces
+  render/act on a post identically.
+- `https://sentientdash.app/tracker.html` — Social-Blade-style follower
+  tracker. Standalone static page (own HTML/CSS/JS under `public/`, not part
+  of the Vite React app).
+- `https://sentientdash.app/insights.html` — analytics/insights page (word
+  cloud, aggregate stats). Also standalone under `public/`.
+- Several subdomains (`hot.`, `archive.`, etc.) point at the same deployed
+  site and just change the favicon/title client-side based on hostname.
+- Backend: `https://cortex-api-db2e.onrender.com` — `GET /api/health`
+  reports the live commit hash (`RENDER_GIT_COMMIT`) so you can confirm a
+  deploy actually landed.
+
+## Feature set (as of this handover)
+
+- **Dashboard**: gallery of Instagram posts across multiple accounts
+  (chatgptricks, traselveloreal, and others added via the admin panel).
+  Filters (account, search w/ `-word` exclusion, type, media, date,
+  engagement, sort, page size) live in `FilterPopover` components. Search
+  indexes captions, OCR'd cover text, and song/artist metadata.
+- **Auth**: Firebase Google Sign-In, email allowlist enforced both
+  client-side and server-side (`_require_firebase_user` middleware in
+  `main.py`). Custom-token bootstrap (`/api/auth/custom-token`) lets the
+  several subdomains/pages share one signed-in session. A legacy secondary
+  password (`LEGACY_REFRESH_PASSWORD` in `App.jsx` /
+  `TRICKS_DASH_REFRESH_PASSWORD` on the backend) is auto-supplied on admin
+  POSTs — mostly redundant now that Firebase is the real boundary, but
+  routes still check it; don't strip it without checking every admin route.
+- **Settings command center**: full-page Admin/Dev app (not a Dashboard modal) with tabs for Overview, Accounts (add/
+  activate/deactivate, per-account HOT-threshold suggestion based on a
+  30-day-max rolling average of first-hour likes), Users (display names,
+  operating roles, Slack IDs, admin access, and managed Sentient accounts),
+  Usage, Notifications, System (disk, Apify, OCR), and Reports. The shared
+  gear exposes Settings only to Admins and Devs; Dashboard remains focused on
+  research and the post gallery.
+- **Tracker**: daily follower-count snapshots (`account_snapshots` table),
+  1d/7d/30d growth computed on **calendar-day boundaries** (collapse to each
+  day's last snapshot, then diff day-over-day) — not a rolling 24h/7d/30h
+  window, specifically so the headline growth number always matches the
+  Historical Stats table's day rows. Drag-and-drop favorites, per-account and
+  batch refresh buttons.
+- **Queue**: a lightweight content-calendar/kanban. Cards are a fixed-aspect
+  cover-image tile (`.queue-thumb-media`) with small overlays (drag handle,
+  priority pill, hover-reveal edit pencil bottom-left); when the "Team
+  overview" scope is active for an admin, an owner-email bar renders as a
+  **separate flex row below** the image (never an overlay on top of it — an
+  earlier version cropped the cover image doing this, since fixed).
+  Multi-select "Assign to" is a `FilterPopover` dropdown, not an
+  always-expanded checkbox list. Right-click context menu (move/remove).
+  Posted tasks auto-hide after 24h.
+- **Media-download modal** (`SlideDownload` in `postDetail.jsx`, shared by
+  both dashboard and Queue): lists a post's carousel/video via
+  `GET /api/dashboard/posts/media?...&list=1` (Apify-backed for large/
+  uncached carousels — can take several seconds), lets you pick a subset or
+  download all as a zip, has a per-cell solo-download and a Google Lens
+  reverse-image-search icon (hover-revealed, not always visible). Column
+  count is computed dynamically per item count (`bestColumns()`, 3–6 cols)
+  to minimize empty last-row cells instead of a fixed CSS `auto-fill`.
+  Per-cell skeleton shimmer while each image loads.
+- **i18n / theming**: `prefs.js` / `prefsContext.jsx` exist with an ES
+  dictionary and a `t()` helper (falls back to the English key if a
+  translation is missing), and there's a light/dark theme toggle — but this
+  is **partial**. Full i18n coverage and a proper light-theme contrast pass
+  across all three pages (dashboard, tracker.html, insights.html) is
+  unstarted backlog (see below).
+
+## Repo map
+
+**tricks-dash** (`src/`):
+- `App.jsx` — the dashboard: filters, gallery, admin panel, everything not
+  called out below.
+- `postDetail.jsx` — shared cover/caption/stats panel + `SlideDownload`
+  media modal, used by both `App.jsx`'s right rail and `queue.jsx`'s sidebar.
+- `queue.jsx` / `queue.css` — Queue board.
+- `mobile/main.jsx` / `mobile/mobile.css` — standalone touch-first PWA shell
+  and the mobile implementations of Home, Research, Queue, Tracker,
+  Insights, and Admin/Dev Settings.
+- `api.js` — `API_BASE`, `apiFetch` (adds the Firebase ID token + legacy
+  password header).
+- `firebase.js` — Firebase app/init.
+- `sso.js` — cross-subdomain custom-token bootstrap.
+- `prefs.js` / `prefsContext.jsx` — i18n dictionary + `usePrefs()`.
+- `styles.css` — every page's styling, one file.
+- `data/traselveloreal-posts.json` + `traselveloreal-summary.json` — see
+  "Second account" below; generated, not hand-edited.
+- `smoke/` — a real smoke test: renders `<App />` in jsdom with Firebase/
+  fetch stubbed, catches render-time crashes that `vite build` alone
+  wouldn't (a past regression shipped a blank page that built cleanly). Run
+  with `node smoke/run.mjs`.
+
+**cortex** (`backend/app/`):
+- `main.py` — ~60 routes: `/api/dashboard/*` (posts, queue, accounts, lists,
+  media), `/api/admin/*` (accounts, users, usage, Apify ops, OCR, Slack,
+  disk), `/api/tracker/*`, `/api/insights/*`, `/api/auth/custom-token`,
+  `/api/health`.
+- `db.py` — SQLite schema + queries (`predict.sqlite3` — see naming note
+  above).
+- `apify_sync.py` — Instagram scraping via Apify (profile scrape vs.
+  per-URL scrape, engagement refresh rules, HOT detection).
+- `slack_alerts.py` — Slack webhook notifications, including the free-form
+  `notify_custom()`.
+- `sentient_ocr.py` — thin client for the standalone Modal OCR worker
+  (`workers/` in this repo) that reads text baked into cover images.
+- `scheduler.py` — the hourly/daily background jobs (snapshot job, HOT
+  sweep), with run-state persisted in a DB table (`scheduler_state`), not in
+  memory — a deploy restarts the process, so anything tracked only in memory
+  would silently re-run or lose its place.
+- `config.py` — env var wiring, CORS origins, data dir. Read the comments
+  here first; they explain most of the "why does this legacy name exist"
+  questions.
+- `render.yaml` — Render Blueprint: standard plan, 2GB disk at `/var/data`,
+  `PREDICT_DATA_DIR`/`PREDICT_ALLOWED_ORIGINS`/`TRICKS_DASH_REFRESH_PASSWORD`/
+  `SENTIENT_OCR_URL`/`SENTIENT_OCR_TOKEN` env vars.
+- `APIFY_OPERATIONS_LEARNINGS.md` — **keep this one, it's still accurate.**
+  Hard-won operational rules (in Spanish) with real dollar costs attached:
+  never use `run-sync-get-dataset-items` for large scrapes, check existing
+  Apify runs before re-scraping, never deploy mid-import, persist scheduler
+  state in the DB not memory, verify live data after deploying (not just
+  that it built), profile-scrape vs URL-scrape cost tradeoffs, etc. Read it
+  before touching Apify, the scheduler, or the DB.
+
+## Deploy workflow — read before pushing anything
+
+Both repos' **mounted working copies on this Mac are not reliable git
+state** — `git log` / `git status` there can show a HEAD behind origin and
+uncommitted diffs, because the established pattern all session has been to
+edit files on the mounted path directly, then copy them into a **fresh
+scratch clone** for the actual commit/push. Don't `git reset`/`git pull` on
+the mounted checkouts expecting to "fix" this; it's cosmetic, not data loss
+— the real history lives on GitHub.
+
+The active desktop checkout now builds and tests reliably. Work directly in
+that checkout, preserve unrelated edits, and use its own `main` and
+`gh-pages` branches for release. Do not create scratch clones or replace the
+checkout with bulk sync operations.
+
+**tricks-dash** (frontend):
+1. Confirm the checkout is on `main` and up to date with `origin/main`.
+2. `git diff --stat` — confirm *only* the files you meant to touch are
+   dirty.
+3. `npm install && npm run build` — must succeed with no errors.
+4. Commit and push `main` with the deploy token (see Secrets below).
+5. **`main` is source only.** The live site is served from the separate
+   `gh-pages` branch. Switch the same clean checkout to `gh-pages`, fast-forward
+   it, and copy only the built entry files and current hashed assets. For the
+   PWA this also includes `mobile/index.html`, `mobile-manifest.webmanifest`,
+   `mobile-sw.js`, `mobile-redirect.js`, and the three `mobile-icon-*.png`
+   files. Preserve all unrelated static content, `CNAME`, cover folders, and
+   `.nojekyll`; never use `rsync --delete`.
+6. Commit/push `gh-pages`, then switch the checkout back to `main` before
+   handing off.
+7. Verify live: `curl -s https://sentientdash.app/queue.html | grep -o 'assets/[a-zA-Z0-9._-]*'`
+   and confirm the hashes match what you just built. An already-open browser
+   tab can keep serving a stale cached bundle even after a real deploy —
+   navigate with a `?cachebust=<anything>` query param to force a fresh
+   fetch when verifying live.
+
+**cortex** (backend): push to `main` — Render auto-deploys on push (no
+separate gh-pages-style step). Confirm via
+`curl -s https://cortex-api-db2e.onrender.com/api/health` — the `commit`
+field should match your new commit hash. Takes ~1-2 minutes; expect
+transient 502s during the swap.
+
+**Never deploy cortex mid-import.** Account backfills/imports run as a
+background thread; a Render redeploy restarts the process and silently
+kills any in-progress import (this has actually happened, cost real Apify
+spend, and lost partial data). There's no reliable way to check import
+status without an authenticated session, so the pragmatic rule that's
+worked all session: **just ask Esteban** ("is an import running right
+now?") before pushing to cortex `main`. Frontend-only deploys never touch
+the backend process and are always safe regardless of import state.
+
+## Secrets
+
+- Both repos have a git-ignored `.env.deploy` at their root with
+  `GITHUB_DEPLOY_TOKEN=ghp_...` — the same token works for both repos' push
+  access. Never commit it, never print its contents in a response.
+- cortex has a Firebase service-account key
+  (`sentient-dash-firebase-adminsdk-*.json`) at its root — also git-ignored
+  (`*firebase-adminsdk*.json` in `.gitignore`), backend-only, never commit.
+- Render env vars (set on the dashboard, not in `render.yaml`'s committed
+  values): `PREDICT_ALLOWED_ORIGINS`, `TRICKS_DASH_REFRESH_PASSWORD`,
+  `SENTIENT_OCR_URL`, `SENTIENT_OCR_TOKEN`.
+
+## Second account: @traselveloreal (tricks-dash only)
+
+A second Instagram account shown only in Sentient Dash, deliberately kept
+**out** of cortex's shared Post DB/API — it's a standalone local dataset.
+Canonical source: `traselveloreal-db/traselveloreal_posts.xlsx`. Bundled
+into the frontend as static JSON (`src/data/traselveloreal-*.json`)
+generated by `scripts/sync-traselveloreal.mjs` and imported directly into
+`App.jsx` — there's no live API for this account, so new posts require
+re-running the sync script and rebuilding/redeploying. See the (rewritten)
+`README.md` for the exact commands.
+
+## Known backlog (not started or not finished)
+
+- Add the remaining subdomains to Firebase's authorized-domains list, then
+  build/deploy/verify mobile login end-to-end (redirect-based sign-in was
+  already switched in for mobile, but never fully verified live).
+- Light theme + full i18n (ES/EN) across the dashboard, `tracker.html`, and
+  `insights.html`, with toggles top-right and a contrast pass in both
+  themes on all three pages. Bigger, multi-file effort; `prefs.js`/
+  `prefsContext.jsx` exist but coverage is partial (mostly the media-modal
+  and a handful of other strings so far).
+- Two old backlog items ("Backend: listar media y zipear una selección" /
+  "Modal de media con miniaturas y selección") described what is now the
+  already-shipped, since-redesigned `SlideDownload` media-download modal —
+  almost certainly stale duplicates at this point, worth a quick confirm
+  with Esteban rather than assuming there's separate scope left there.
+
+## Planned repo merge
+
+Esteban is planning to merge tricks-dash and cortex into a single repo.
+Things worth thinking through before doing it, based on what's load-bearing
+today:
+- **Two different deploy targets with different mechanisms**: tricks-dash
+  ships a static build to a `gh-pages` branch (manual two-step: build in a
+  clone, sync just the hashed assets + entry HTML into a separately-cloned
+  `gh-pages` branch); cortex auto-deploys via Render's GitHub integration
+  on push to `main`, using `render.yaml`. A monorepo needs to preserve both
+  triggers independently (e.g. Render's root/build-path config pointed at a
+  `backend/` subfolder, and a separate GitHub Actions or manual workflow
+  still producing a `gh-pages`-equivalent for the frontend) — collapsing
+  them into one branch/one deploy step would likely break one side.
+- **Two separate GitHub remotes and deploy tokens today** (`chatgptricks/
+  tricks-dash`, `chatgptricks/cortex`) — decide whether the merge keeps one
+  as the survivor (rewriting the other's history in, or just copying its
+  current tree over and dropping history) or creates a fresh third repo.
+  Either way, update `.env.deploy` in whatever repo(s) remain and update the
+  CORS origins / Firebase authorized domains if the Pages URL changes.
+- `postDetail.jsx` is the one file that already spans "frontend talks to
+  backend" concerns most tightly (it calls cortex's media/OCR/download
+  endpoints directly) — a good file to sanity-check first after merging,
+  since it's shared by two different pages already and easy to silently
+  break for one of them while testing the other.
+- Once merged, this handover only needs to exist once — fold the two copies
+  into a single top-level `FOR_CODEX.md` instead of leaving them to drift
+  apart.
+
+## Queue operational reset and account onboarding
+
+- `POST /api/admin/queue/reset` is the deliberate clean-start control for
+  admins/devs. It requires the exact form confirmation `RESET_QUEUE` and
+  deletes only Queue operational state: legacy assignments/events, Queue
+  requests/events, drafts, tickets, Queue attachments, managed-account
+  selections, and first-use onboarding markers. It preserves users, roles,
+  Sentient accounts, source posts, Dashboard, Tracker, and settings.
+- The reset also writes `scheduler_state.queue_hot_routing_start` at the
+  reset timestamp. That prevents historic HOT posts from immediately
+  repopulating the fresh pool; only HOT detections occurring afterwards are
+  eligible.
+- Every user sees a one-time Queue modal to select the Sentient accounts they
+  manage. They can save an empty selection, edit it later from Queue Settings,
+  or submit a missing-account request. Those requests appear in the existing
+  Queue approval inbox; approving one attaches active Sentient accounts to
+  that user immediately.
