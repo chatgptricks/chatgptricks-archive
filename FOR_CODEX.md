@@ -107,25 +107,17 @@ Instagram analytics + content-queue tool. It's two repos today:
 - **`chatgptricks/cortex`** — the backend. FastAPI, essentially one big
   `backend/app/main.py` (~114k chars, ~60 routes). Deployed on Render at
   `cortex-api-db2e.onrender.com`. Local path on this Mac:
-  `/Users/tbnalfaro/Desktop/Codex Projects/10 Predict` (yes, the folder is
-  still named "10 Predict" — see "Predict is archived" below).
+  `/Users/tbnalfaro/Desktop/Codex Projects/10 Predict` (the local folder name
+  is retained for now).
 
 Local paths as mounted for an agent working on this Mac:
 - tricks-dash: `/Users/tbnalfaro/Desktop/Codex Projects/09 Tricks Dash/Tricks Dash`
 - cortex: `/Users/tbnalfaro/Desktop/Codex Projects/10 Predict`
 
-**"Predict is archived."** `cortex` used to be a completely different app —
-"Cortex by Sentient", a TRIBE v2 fMRI-model cover-image analyzer with A/B
-testing and a likes-prediction model (`prediction_v2.py`, `calibration.py`,
-`tribe_adapter.py`, etc.). That entire feature set was deliberately deleted
-(only `__pycache__` artifacts remain — the `.py` source files are gone). The
-repo was repurposed as the Sentient Dash backend. `config.py` and a few other
-files still have comments explaining this; the on-disk DB file is still
-named `predict.sqlite3` and the `PREDICT_DATA_DIR` / `PREDICT_ALLOWED_ORIGINS`
-env var names survive from that era — renaming them would be a real
-migration for zero benefit, so it was left alone on purpose. If you find a
-doc or comment that talks about TRIBE v2, brain activation, calibration
-models, or A/B cover testing, it's describing the dead product, not this one.
+The backend is now Sentient Dash-only. Production data uses Postgres and all
+runtime media uses Cloudflare R2; the local SQLite/data directory is a
+development fallback only. Historical migration helpers are isolated from
+request and scheduler paths and are not part of normal runtime behavior.
 
 ## Live surfaces
 
@@ -154,8 +146,8 @@ models, or A/B cover testing, it's describing the dead product, not this one.
 
 ## Feature set (as of this handover)
 
-- **Dashboard**: gallery of Instagram posts across multiple accounts
-  (chatgptricks, traselveloreal, and others added via the admin panel).
+- **Dashboard**: gallery of Instagram posts across multiple accounts added
+  through the admin panel.
   Filters (account, search w/ `-word` exclusion, type, media, date,
   engagement, sort, page size) live in `FilterPopover` components. Search
   indexes captions, OCR'd cover text, and song/artist metadata.
@@ -222,8 +214,6 @@ models, or A/B cover testing, it's describing the dead product, not this one.
 - `sso.js` — cross-subdomain custom-token bootstrap.
 - `prefs.js` / `prefsContext.jsx` — i18n dictionary + `usePrefs()`.
 - `styles.css` — every page's styling, one file.
-- `data/traselveloreal-posts.json` + `traselveloreal-summary.json` — see
-  "Second account" below; generated, not hand-edited.
 - `smoke/` — a real smoke test: renders `<App />` in jsdom with Firebase/
   fetch stubbed, catches render-time crashes that `vite build` alone
   wouldn't (a past regression shipped a blank page that built cleanly). Run
@@ -234,8 +224,7 @@ models, or A/B cover testing, it's describing the dead product, not this one.
   media), `/api/admin/*` (accounts, users, usage, Apify ops, OCR, Slack,
   disk), `/api/tracker/*`, `/api/insights/*`, `/api/auth/custom-token`,
   `/api/health`.
-- `db.py` — SQLite schema + queries (`predict.sqlite3` — see naming note
-  above).
+- `db.py` — SQLite schema + queries for the local development fallback.
 - `apify_sync.py` — Instagram scraping via Apify (profile scrape vs.
   per-URL scrape, engagement refresh rules, HOT detection).
 - `slack_alerts.py` — Slack webhook notifications, including the free-form
@@ -246,12 +235,11 @@ models, or A/B cover testing, it's describing the dead product, not this one.
   sweep), with run-state persisted in a DB table (`scheduler_state`), not in
   memory — a deploy restarts the process, so anything tracked only in memory
   would silently re-run or lose its place.
-- `config.py` — env var wiring, CORS origins, data dir. Read the comments
-  here first; they explain most of the "why does this legacy name exist"
-  questions.
-- `render.yaml` — Render Blueprint: standard plan, 2GB disk at `/var/data`,
-  `PREDICT_DATA_DIR`/`PREDICT_ALLOWED_ORIGINS`/`TRICKS_DASH_REFRESH_PASSWORD`/
-  `SENTIENT_OCR_URL`/`SENTIENT_OCR_TOKEN` env vars.
+- `config.py` — env var wiring, CORS origins, R2, and the local development
+  data dir.
+- `render.yaml` — Render Blueprint for the web/API and dedicated worker;
+  production media is stored in Cloudflare R2 and no persistent media disk is
+  required.
 - `APIFY_OPERATIONS_LEARNINGS.md` — **keep this one, it's still accurate.**
   Hard-won operational rules (in Spanish) with real dollar costs attached:
   never use `run-sync-get-dataset-items` for large scrapes, check existing
@@ -319,20 +307,9 @@ the backend process and are always safe regardless of import state.
 - cortex has a Firebase service-account key
   (`sentient-dash-firebase-adminsdk-*.json`) at its root — also git-ignored
   (`*firebase-adminsdk*.json` in `.gitignore`), backend-only, never commit.
-- Render env vars (set on the dashboard, not in `render.yaml`'s committed
-  values): `PREDICT_ALLOWED_ORIGINS`, `TRICKS_DASH_REFRESH_PASSWORD`,
-  `SENTIENT_OCR_URL`, `SENTIENT_OCR_TOKEN`.
-
-## Second account: @traselveloreal (tricks-dash only)
-
-A second Instagram account shown only in Sentient Dash, deliberately kept
-**out** of cortex's shared Post DB/API — it's a standalone local dataset.
-Canonical source: `traselveloreal-db/traselveloreal_posts.xlsx`. Bundled
-into the frontend as static JSON (`src/data/traselveloreal-*.json`)
-generated by `scripts/sync-traselveloreal.mjs` and imported directly into
-`App.jsx` — there's no live API for this account, so new posts require
-re-running the sync script and rebuilding/redeploying. See the (rewritten)
-`README.md` for the exact commands.
+- Render env vars include `SENTIENT_ALLOWED_ORIGINS`,
+  `TRICKS_DASH_REFRESH_PASSWORD`, R2 credentials, `SENTIENT_OCR_URL`, and
+  `SENTIENT_OCR_TOKEN`.
 
 ## Known backlog (not started or not finished)
 
